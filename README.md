@@ -4,6 +4,12 @@ Selainpohjainen kyselysivu, joka käyttää paikallista Ollama-mallia
 `jobautomation/OpenEuroLLM-Finnish:latest`. Kysely-sovellus käsittelee
 keskustelun paikallisesti eikä lähetä sitä pilvipalveluun.
 
+Mallin voi vaihtaa sivun oikean yläkulman valikosta. Valikossa näkyvät kaikki
+koneelle asennetut Ollama-mallit (`ollama list`); valinta muistetaan selaimessa. Malli ladataan muistiin heti valinnan yhteydessä
+(merkkivalo vilkkuu keltaisena latauksen ajan), joten ensimmäinen vastaus ei
+viivästy.
+Uuden mallin saa listalle komennolla `ollama pull <malli>` ja sivun päivityksellä.
+
 Kysymyksen voi kirjoittaa tai sanella mikrofonipainikkeella. Sanelu käyttää
 selaimen suomenkielistä puheentunnistusta, joka voi selaimesta riippuen
 käsitellä ääntä selaimen omassa pilvipalvelussa. Sanelu vaatii selaimen

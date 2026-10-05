@@ -81,6 +81,18 @@
       font-weight: 600;
     }
 
+    .model-badge select {
+      max-width: 260px;
+      border: 0;
+      background: transparent;
+      color: inherit;
+      font: inherit;
+      cursor: pointer;
+      text-overflow: ellipsis;
+    }
+
+    .model-badge select:focus-visible { outline: 2px solid var(--green); outline-offset: 3px; }
+
     .status-dot {
       width: 7px;
       height: 7px;
@@ -88,6 +100,14 @@
       background: #79a978;
       box-shadow: 0 0 0 3px #79a97820;
     }
+
+    .model-badge.loading .status-dot {
+      background: #d9a441;
+      box-shadow: 0 0 0 3px #d9a44130;
+      animation: model-loading 1s ease-in-out infinite alternate;
+    }
+
+    @keyframes model-loading { to { opacity: .3; } }
 
     main { max-width: 720px; margin: 0 auto; }
 
@@ -346,7 +366,9 @@
         </span>
         <span>Kysely</span>
       </a>
-      <span class="model-badge"><span class="status-dot"></span>jobautomation/OpenEuroLLM-Finnish</span>
+      <label class="model-badge"><span class="status-dot"></span>
+        <select id="model" aria-label="Valitse malli"><option>jobautomation/OpenEuroLLM-Finnish:latest</option></select>
+      </label>
     </header>
 
     <main>
@@ -395,6 +417,9 @@
     const errorBox = document.querySelector("#error");
     const charCount = document.querySelector("#char-count");
     const apiUrl = "http://127.0.0.1:8000/api/chat";
+    const modelsUrl = "http://127.0.0.1:8000/api/models";
+    const loadUrl = "http://127.0.0.1:8000/api/load";
+    const modelSelect = document.querySelector("#model");
     const history = [
       { role: "system", content: "Vastaa aina suomeksi. Ole selkeä, ystävällinen ja täsmällinen. Jos et tiedä vastausta, kerro se avoimesti." }
     ];
@@ -524,6 +549,55 @@
       }
     });
 
+    let loadToken = 0;
+
+    async function warmUpModel() {
+      const token = ++loadToken;
+      const badge = modelSelect.parentElement;
+      badge.classList.add("loading");
+      badge.title = "Ladataan mallia muistiin...";
+      try {
+        const response = await fetch(loadUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: modelSelect.value })
+        });
+        const result = await response.json();
+        if (token !== loadToken) return;
+        if (!response.ok) throw new Error(result.error || "Mallin lataus epäonnistui.");
+        errorBox.hidden = true;
+      } catch (error) {
+        if (token !== loadToken) return;
+        errorBox.textContent = error instanceof TypeError ? "Mallin lataus epäonnistui: palvelimeen ei saatu yhteyttä." : error.message;
+        errorBox.hidden = false;
+      } finally {
+        if (token === loadToken) {
+          badge.classList.remove("loading");
+          badge.title = "";
+        }
+      }
+    }
+
+    async function loadModels() {
+      try {
+        const response = await fetch(modelsUrl);
+        const result = await response.json();
+        if (!response.ok || !Array.isArray(result.models) || !result.models.length) return;
+        const saved = localStorage.getItem("kysely-model");
+        const selected = result.models.includes(saved) ? saved : result.default;
+        modelSelect.replaceChildren(...result.models.map((name) => new Option(name, name, false, name === selected)));
+      } catch {
+        // Oletusmalli jää käyttöön, jos listaa ei saada.
+      }
+      warmUpModel();
+    }
+
+    modelSelect.addEventListener("change", () => {
+      localStorage.setItem("kysely-model", modelSelect.value);
+      warmUpModel();
+    });
+    loadModels();
+
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       const question = input.value.trim();
@@ -544,7 +618,7 @@
         const response = await fetch(apiUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ messages: history })
+          body: JSON.stringify({ model: modelSelect.value, messages: history })
         });
         const contentType = response.headers.get("content-type") || "";
         if (!contentType.includes("application/json")) {

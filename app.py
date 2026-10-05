@@ -8,14 +8,25 @@ import urllib.request
 HOST = "127.0.0.1"
 PORT = 8000
 OLLAMA_URL = "http://127.0.0.1:11434/api/chat"
-MODEL = "jobautomation/OpenEuroLLM-Finnish:latest"
+OLLAMA_TAGS_URL = "http://127.0.0.1:11434/api/tags"
+MODEL = "jobautomation/OpenEuroLLM-Finnish:latest"  # oletusmalli
 ROOT = Path(__file__).resolve().parent
 MAX_REQUEST_SIZE = 1_000_000
 
 
+def list_models():
+    with urllib.request.urlopen(OLLAMA_TAGS_URL, timeout=10) as response:
+        data = json.loads(response.read().decode("utf-8"))
+    return sorted(
+        item["name"]
+        for item in data.get("models", [])
+        if isinstance(item, dict) and isinstance(item.get("name"), str)
+    )
+
+
 class RequestHandler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
-        if self.path != "/api/chat":
+        if self.path not in ("/api/chat", "/api/models", "/api/load"):
             self.send_error(404)
             return
 
@@ -24,6 +35,15 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
+        if self.path == "/api/models":
+            try:
+                models = list_models()
+            except (urllib.error.URLError, TimeoutError, OSError, ValueError) as error:
+                self._send_json(502, {"error": f"Mallilistaa ei saatu Ollamalta. ({error})"})
+                return
+            self._send_json(200, {"models": models, "default": MODEL})
+            return
+
         if self.path not in ("/", "/index.html"):
             self.send_error(404)
             return
@@ -41,7 +61,7 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(page)
 
     def do_POST(self):
-        if self.path != "/api/chat":
+        if self.path not in ("/api/chat", "/api/load"):
             self.send_error(404)
             return
 
@@ -61,6 +81,10 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"error": "Pyyntö ei ole kelvollista JSON-dataa."})
             return
 
+        if self.path == "/api/load":
+            self._load_model(payload)
+            return
+
         messages = payload.get("messages") if isinstance(payload, dict) else None
         if (
             not isinstance(messages, list)
@@ -75,8 +99,12 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"error": "Viestihistoria on virheellinen."})
             return
 
+        model = self._requested_model(payload)
+        if model is None:
+            return
+
         request_data = json.dumps(
-            {"model": MODEL, "messages": messages, "stream": False}
+            {"model": model, "messages": messages, "stream": False}
         ).encode("utf-8")
         request = urllib.request.Request(
             OLLAMA_URL,
@@ -101,7 +129,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 {
                     "error": (
                         "Ollamaan ei saatu yhteyttä. Varmista, että Ollama on "
-                        f"käynnissä ja malli {MODEL} on ladattu. ({error})"
+                        f"käynnissä ja malli {model} on ladattu. ({error})"
                     )
                 },
             )
@@ -118,6 +146,47 @@ class RequestHandler(BaseHTTPRequestHandler):
 
         self._send_json(200, {"answer": message})
 
+    def _requested_model(self, payload):
+        model = payload.get("model", MODEL) if isinstance(payload, dict) else None
+        if not isinstance(model, str):
+            self._send_json(400, {"error": "Mallin nimi on virheellinen."})
+            return None
+        if model != MODEL:
+            try:
+                installed = list_models()
+            except (urllib.error.URLError, TimeoutError, OSError, ValueError) as error:
+                self._send_json(502, {"error": f"Mallilistaa ei saatu Ollamalta. ({error})"})
+                return None
+            if model not in installed:
+                self._send_json(400, {"error": f"Mallia {model} ei ole asennettu."})
+                return None
+        return model
+
+    def _load_model(self, payload):
+        model = self._requested_model(payload)
+        if model is None:
+            return
+
+        # Ollama lataa mallin muistiin, kun chat-pyyntö on ilman viestejä.
+        request = urllib.request.Request(
+            OLLAMA_URL,
+            data=json.dumps({"model": model, "messages": []}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=180) as response:
+                response.read()
+        except urllib.error.HTTPError as error:
+            detail = error.read().decode("utf-8", errors="replace")
+            self._send_json(502, {"error": f"Mallin lataus epäonnistui ({error.code}): {detail}"})
+            return
+        except (urllib.error.URLError, TimeoutError, OSError) as error:
+            self._send_json(502, {"error": f"Mallin lataus epäonnistui. ({error})"})
+            return
+
+        self._send_json(200, {"loaded": model})
+
     def _send_json(self, status, data):
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
@@ -129,7 +198,7 @@ class RequestHandler(BaseHTTPRequestHandler):
 
     def _send_cors_headers(self):
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
 
     def log_message(self, format_string, *args):
