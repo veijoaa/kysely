@@ -111,6 +111,72 @@
 
     main { max-width: 720px; margin: 0 auto; }
 
+    .avatar-stage {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 22px;
+    }
+
+    .talker {
+      width: 112px;
+      height: 112px;
+      filter: drop-shadow(0 10px 18px #263b2b22);
+      transition: transform .2s ease;
+    }
+
+    .talker.speaking { transform: translateY(-2px) scale(1.03); }
+
+    .talker .eyes {
+      transform-box: fill-box;
+      transform-origin: center;
+      animation: blink 5s infinite;
+    }
+
+    .talker .mouth-talk { display: none; transform-box: fill-box; transform-origin: center; }
+    .talker.speaking .mouth-idle { display: none; }
+    .talker.speaking .mouth-talk { display: block; animation: talk .36s ease-in-out infinite alternate; }
+
+    @keyframes blink {
+      0%, 94%, 100% { transform: scaleY(1); }
+      97% { transform: scaleY(.1); }
+    }
+
+    @keyframes talk {
+      from { transform: scaleY(.25); }
+      to { transform: scaleY(1.1); }
+    }
+
+    .avatar-controls { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+
+    .avatar-controls button {
+      display: inline-block;
+      width: auto;
+      height: auto;
+      flex: none;
+      padding: 6px 12px;
+      border: 1px solid #dce4d8;
+      border-radius: 999px;
+      background: #ffffff9c;
+      color: #53634f;
+      font: inherit;
+      font-size: 12px;
+      font-weight: 600;
+      white-space: nowrap;
+      cursor: pointer;
+    }
+
+    .avatar-controls button[hidden] { display: none; }
+    .avatar-controls button:hover:not(:disabled) { transform: none; background: #fff; }
+    .avatar-controls button:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+
+    .avatar-note { margin: 0; color: var(--muted); font-size: 12px; text-align: center; }
+
+    @media (prefers-reduced-motion: reduce) {
+      .talker .eyes, .talker.speaking .mouth-talk { animation: none; }
+    }
+
     .intro { margin-bottom: 30px; text-align: center; }
 
     .eyebrow {
@@ -372,6 +438,26 @@
     </header>
 
     <main>
+      <section class="avatar-stage" aria-label="Puhuva avatar">
+        <svg id="talker" class="talker" viewBox="0 0 120 120" role="img" aria-label="Puhuva avatar">
+          <circle cx="60" cy="62" r="42" fill="#f3dcc4"/>
+          <path d="M18 58c0-26 18-42 42-42s42 16 42 42c-8-10-18-16-30-18-14 8-34 10-54 18z" fill="#335f48"/>
+          <circle cx="42" cy="74" r="6" fill="#eaa98e" opacity=".45"/>
+          <circle cx="78" cy="74" r="6" fill="#eaa98e" opacity=".45"/>
+          <g class="eyes" fill="#23271f">
+            <ellipse cx="45" cy="62" rx="4" ry="5"/>
+            <ellipse cx="75" cy="62" rx="4" ry="5"/>
+          </g>
+          <path class="mouth-idle" d="M48 80q12 9 24 0" fill="none" stroke="#7a3f33" stroke-width="3" stroke-linecap="round"/>
+          <ellipse class="mouth-talk" cx="60" cy="84" rx="9" ry="7" fill="#7a3f33"/>
+        </svg>
+        <div class="avatar-controls">
+          <button id="voice-toggle" type="button" aria-pressed="true">Ääni päällä</button>
+          <button id="voice-stop" type="button" hidden>Lopeta puhe</button>
+        </div>
+        <p id="avatar-note" class="avatar-note" hidden></p>
+      </section>
+
       <section class="intro" aria-labelledby="title">
         <p class="eyebrow">Paikallinen tekoäly</p>
         <h1 id="title">Mitä haluaisit<br>tietää?</h1>
@@ -447,6 +533,7 @@
       recognition.continuous = false;
 
       recognition.addEventListener("start", () => {
+        stopSpeaking();
         isListening = true;
         voiceStatus.textContent = "Kuuntelen... Puhu nyt suomeksi.";
         voiceStatus.hidden = false;
@@ -508,6 +595,93 @@
         errorBox.hidden = false;
       }
     });
+
+    const talker = document.querySelector("#talker");
+    const voiceToggle = document.querySelector("#voice-toggle");
+    const voiceStop = document.querySelector("#voice-stop");
+    const avatarNote = document.querySelector("#avatar-note");
+    const synth = window.speechSynthesis;
+    let speechEnabled = Boolean(synth) && localStorage.getItem("kysely-speak") !== "off";
+    let speechToken = 0;
+
+    function finnishVoice() {
+      const voices = synth.getVoices().filter((voice) => voice.lang.toLowerCase().startsWith("fi"));
+      return voices.find((voice) => /noora|harri|selma|natural|online/i.test(voice.name)) || voices[0] || null;
+    }
+
+    function setSpeaking(active) {
+      talker.classList.toggle("speaking", active);
+      voiceStop.hidden = !active;
+    }
+
+    function stopSpeaking() {
+      speechToken++;
+      if (synth) synth.cancel();
+      setSpeaking(false);
+    }
+
+    function speakableChunks(text) {
+      const plain = text
+        .replace(/```[\s\S]*?```/g, " ")
+        .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+        .replace(/[*_#`>~|]/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+      const sentences = plain.match(/[^.!?]+[.!?]*\s*/g) || [];
+      const chunks = [];
+      for (const sentence of sentences) {
+        const last = chunks.length - 1;
+        if (last >= 0 && chunks[last].length + sentence.length < 200) chunks[last] += sentence;
+        else chunks.push(sentence);
+      }
+      return chunks.map((chunk) => chunk.trim()).filter(Boolean);
+    }
+
+    function speak(text) {
+      if (!speechEnabled || !synth) return;
+      stopSpeaking();
+      const chunks = speakableChunks(text);
+      if (!chunks.length) return;
+
+      const token = speechToken;
+      const voice = finnishVoice();
+      avatarNote.hidden = Boolean(voice);
+      if (!voice) avatarNote.textContent = "Selaimessa ei löytynyt suomenkielistä ääntä, joten puhe voi kuulostaa oudolta. Kokeile Edgeä.";
+
+      chunks.forEach((chunk, index) => {
+        const utterance = new SpeechSynthesisUtterance(chunk);
+        utterance.lang = "fi-FI";
+        if (voice) utterance.voice = voice;
+        if (index === 0) utterance.addEventListener("start", () => { if (token === speechToken) setSpeaking(true); });
+        const finish = () => { if (token === speechToken && index === chunks.length - 1) setSpeaking(false); };
+        utterance.addEventListener("end", finish);
+        utterance.addEventListener("error", finish);
+        synth.speak(utterance);
+      });
+    }
+
+    function updateVoiceToggle() {
+      voiceToggle.textContent = speechEnabled ? "Ääni päällä" : "Ääni pois";
+      voiceToggle.setAttribute("aria-pressed", String(speechEnabled));
+    }
+
+    if (!synth) {
+      speechEnabled = false;
+      voiceToggle.disabled = true;
+      voiceToggle.textContent = "Puhe ei ole tuettu";
+    } else {
+      updateVoiceToggle();
+      synth.addEventListener("voiceschanged", () => { avatarNote.hidden = true; });
+    }
+
+    voiceToggle.addEventListener("click", () => {
+      speechEnabled = !speechEnabled;
+      localStorage.setItem("kysely-speak", speechEnabled ? "on" : "off");
+      if (!speechEnabled) stopSpeaking();
+      updateVoiceToggle();
+    });
+    voiceStop.addEventListener("click", stopSpeaking);
+    window.addEventListener("pagehide", stopSpeaking);
 
     function addMessage(role, text, extraClass = "") {
       const message = document.createElement("div");
@@ -604,6 +778,7 @@
       if (!question || isSending || isListening) return;
 
       document.querySelector("#welcome")?.remove();
+      stopSpeaking();
       errorBox.hidden = true;
       addMessage("user", question);
       history.push({ role: "user", content: question });
@@ -633,6 +808,7 @@
         answerNode.parentElement.parentElement.remove();
         addMessage("assistant", result.answer);
         history.push({ role: "assistant", content: result.answer });
+        speak(result.answer);
       } catch (error) {
         answerNode.parentElement.parentElement.remove();
         history.pop();

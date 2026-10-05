@@ -10,6 +10,11 @@ koneelle asennetut Ollama-mallit (`ollama list`); valinta muistetaan selaimessa.
 viivästy.
 Uuden mallin saa listalle komennolla `ollama pull <malli>` ja sivun päivityksellä.
 
+Sivun yläosassa on puhuva avatar, joka lukee tekoälyn vastaukset ääneen selaimen
+suomenkielisellä puhesynteesillä ja liikuttaa suuta puheen aikana. Äänen voi
+mykistää tai puheen keskeyttää painikkeilla. Äänen laatu riippuu selaimesta;
+Edgessä on hyvät suomenkieliset äänet.
+
 Kysymyksen voi kirjoittaa tai sanella mikrofonipainikkeella. Sanelu käyttää
 selaimen suomenkielistä puheentunnistusta, joka voi selaimesta riippuen
 käsitellä ääntä selaimen omassa pilvipalvelussa. Sanelu vaatii selaimen
